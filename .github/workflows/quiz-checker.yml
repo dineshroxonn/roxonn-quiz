@@ -1,0 +1,103 @@
+name: Quiz Answer Checker
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  check-answer:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'quiz')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        
+      - name: Check Answer
+        id: check-answer
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the issue details
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          ISSUE_BODY="${{ github.event.issue.body }}"
+          COMMENT_BODY="${{ github.event.comment.body }}"
+          COMMENTER="${{ github.event.comment.user.login }}"
+          
+          # Check if issue is already closed - if so, no more rewards
+          ISSUE_STATE=$(gh issue view $ISSUE_NUMBER --json state --jq '.state')
+          if [ "$ISSUE_STATE" = "CLOSED" ]; then
+            gh issue comment $ISSUE_NUMBER --body "Sorry @$COMMENTER, this quiz has already been completed by another user and is now closed."
+            echo "eligible=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Check for instance number in title to support multiple users
+          INSTANCE_ID=$(echo "${{ github.event.issue.title }}" | grep -oE 'Instance [0-9]+' | grep -oE '[0-9]+' || echo "1")
+          
+          # Extract correct answer from issue body using regex
+          CORRECT_ANSWER=$(echo "$ISSUE_BODY" | grep -o "<!-- CORRECT_ANSWER: [A-Z] -->" | cut -d' ' -f3)
+          
+          # Extract user's answer (assume they just post A, B, C, etc.)
+          USER_ANSWER=$(echo "$COMMENT_BODY" | tr -d '[:space:]')
+          
+          echo "Checking answer: User answered $USER_ANSWER, correct is $CORRECT_ANSWER"
+          
+          # If answer is correct
+          if [ "$USER_ANSWER" = "$CORRECT_ANSWER" ]; then
+            echo "correct=true" >> $GITHUB_OUTPUT
+            echo "commenter=$COMMENTER" >> $GITHUB_OUTPUT
+          else
+            echo "correct=false" >> $GITHUB_OUTPUT
+            # Comment that the answer is incorrect
+            gh issue comment $ISSUE_NUMBER --body "Sorry @$COMMENTER, that's not the correct answer. Please try again!"
+          fi
+      
+      # Only run next steps if answer is correct
+      - name: Process Correct Answer
+        if: steps.check-answer.outputs.correct == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          COMMENTER="${{ steps.check-answer.outputs.commenter }}"
+          BRANCH_NAME="quiz-answer-$ISSUE_NUMBER-$GITHUB_RUN_ID"
+          
+          # Comment that the answer is correct
+          gh issue comment $ISSUE_NUMBER --body "Correct answer, @$COMMENTER! Processing your reward..."
+          
+          # Create a branch from main
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git checkout -b $BRANCH_NAME
+          
+          # Create answer file
+          mkdir -p quiz-answers
+          echo "Quiz question #$ISSUE_NUMBER answered correctly by @$COMMENTER" > quiz-answers/answer-$ISSUE_NUMBER-$COMMENTER.md
+          
+          # Commit and push
+          git add quiz-answers/answer-$ISSUE_NUMBER-$COMMENTER.md
+          git commit -m "Answer to quiz question #$ISSUE_NUMBER by @$COMMENTER"
+          git push origin $BRANCH_NAME
+          
+          # Create PR that will close the issue
+          gh pr create --title "Quiz #$ISSUE_NUMBER answered by @$COMMENTER" \
+                      --body "This PR contains the correct answer to quiz question #$ISSUE_NUMBER by @$COMMENTER.\n\nCloses #$ISSUE_NUMBER" \
+                      --head $BRANCH_NAME \
+                      --base main
+          
+          # Get the PR number
+          PR_NUMBER=$(gh pr list --head $BRANCH_NAME --json number --jq '.[0].number')
+          
+          # Merge the PR
+          gh pr merge $PR_NUMBER --merge --delete-branch
+
+      - name: Add Social Share Instructions
+        if: steps.check-answer.outputs.correct == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          COMMENTER="${{ steps.check-answer.outputs.commenter }}"
+          
+          # Add social media sharing instructions
+          gh issue comment $ISSUE_NUMBER --body "Congratulations @$COMMENTER! You've earned tokens for completing this quiz question. Share your achievement on social media with the hashtag #EarnWithRoxn!"
