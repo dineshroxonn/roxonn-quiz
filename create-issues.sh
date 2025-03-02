@@ -4,8 +4,8 @@
 # It's meant to be run after the repository is created on GitHub
 
 # Change these variables as needed
-REPO_OWNER="roxonn-futuretech"
-REPO_NAME="roxonn-platform-quiz"
+REPO_OWNER="dineshroxonn"
+REPO_NAME="roxonn-quiz"
 INSTANCES_PER_QUESTION=5
 
 # Array of question topics from the question files
@@ -35,12 +35,11 @@ for i in "${!QUESTION_FILES[@]}"; do
     
     echo "Creating: $TITLE"
     
-    # Use GitHub CLI to create the issue
+    # Use GitHub CLI to create the issue without label for now
     # This requires gh CLI to be authenticated
     gh issue create \
       --repo "$REPO_OWNER/$REPO_NAME" \
       --title "$TITLE" \
-      --label "quiz" \
       --body "$CONTENT"
     
     # Pause to avoid rate limiting

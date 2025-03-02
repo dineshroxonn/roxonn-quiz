@@ -66,27 +66,36 @@ jobs:
         run: |
           ISSUE_NUMBER="${{ github.event.issue.number }}"
           COMMENTER="${{ steps.check-answer.outputs.commenter }}"
+          BRANCH_NAME="quiz-answer-$ISSUE_NUMBER-$GITHUB_RUN_ID"
           
           # Comment that the answer is correct
-          gh issue comment $ISSUE_NUMBER --body "Correct answer, @$COMMENTER! 🎉"
+          gh issue comment $ISSUE_NUMBER --body "Correct answer, @$COMMENTER! Processing your reward..."
           
-          # Record the correct answer in a file in the main branch
+          # Create a branch from main
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
+          git checkout -b $BRANCH_NAME
           
-          # Create directory if it doesn't exist
+          # Create answer file
           mkdir -p quiz-answers
+          echo "Quiz question #$ISSUE_NUMBER answered correctly by @$COMMENTER" > quiz-answers/answer-$ISSUE_NUMBER-$COMMENTER.md
           
-          # Create and commit answer file
-          echo "Quiz question #$ISSUE_NUMBER answered correctly by @$COMMENTER on $(date)" >> quiz-answers/successful-answers.md
+          # Commit and push
+          git add quiz-answers/answer-$ISSUE_NUMBER-$COMMENTER.md
+          git commit -m "Answer to quiz question #$ISSUE_NUMBER by @$COMMENTER"
+          git push origin $BRANCH_NAME
           
-          # Commit and push directly to main (no PR needed)
-          git add quiz-answers/successful-answers.md
-          git commit -m "Record correct answer to quiz #$ISSUE_NUMBER by @$COMMENTER"
-          git push origin HEAD:main
+          # Create PR that will close the issue
+          gh pr create --title "Quiz #$ISSUE_NUMBER answered by @$COMMENTER" \
+                      --body "This PR contains the correct answer to quiz question #$ISSUE_NUMBER by @$COMMENTER.\n\nCloses #$ISSUE_NUMBER" \
+                      --head $BRANCH_NAME \
+                      --base main
           
-          # Close the issue
-          gh issue close $ISSUE_NUMBER --comment "This quiz question has been completed successfully by @$COMMENTER. Reward tokens will be distributed according to the Roxonn platform rules."
+          # Get the PR number
+          PR_NUMBER=$(gh pr list --head $BRANCH_NAME --json number --jq '.[0].number')
+          
+          # Merge the PR
+          gh pr merge $PR_NUMBER --merge --delete-branch
 
       - name: Add Social Share Instructions
         if: steps.check-answer.outputs.correct == 'true'
